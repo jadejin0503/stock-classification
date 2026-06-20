@@ -5,3 +5,5 @@ __pycache__/
 .vercel
 .netlify
 stock-classification-share.zip
+.gh-token-temp
+.git-askpass.sh
