@@ -2,13 +2,15 @@
 """为 stock-details.json 中每只股票自动生成 risk 字段"""
 
 import json
+import os
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-CANVAS = Path(
-    "/Users/jade/.cursor/projects/Users-jade-Desktop-AI-knowledge/canvases/watchlist-classification.canvas.tsx"
-)
+_DEFAULT_CANVAS = "/Users/jade/.cursor/projects/Users-jade-Desktop-AI-knowledge/canvases/watchlist-classification.canvas.tsx"
+CANVAS = Path(os.environ.get("STOCK_CANVAS", _DEFAULT_CANVAS))
+if not CANVAS.exists() and (ROOT / "watchlist-classification.canvas.tsx").exists():
+    CANVAS = ROOT / "watchlist-classification.canvas.tsx"
 DETAILS_PATH = ROOT / "stock-details.json"
 
 CATEGORY_RISKS = {
