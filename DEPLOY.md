@@ -29,9 +29,12 @@ git push -u origin main
 
 ### 2. 开启 GitHub Pages
 
-1. 打开仓库 → **Settings** → **Pages**
-2. **Build and deployment** → Source 选 **GitHub Actions**
-3. 首次 push 后，Actions 工作流会自动构建并部署
+1. 打开 [仓库 Settings → Pages](https://github.com/jadejin0503/stock-classification/settings/pages)
+2. **Build and deployment** → Source 选 **Deploy from a branch**
+3. Branch 选 **main**，文件夹选 **/docs**，保存
+4. 约 1–2 分钟后即可访问
+
+（若 Token 含 `workflow` 权限，也可改用 GitHub Actions 自动部署，见 `.github/workflows/`。）
 
 ### 3. 获取分享链接
 
