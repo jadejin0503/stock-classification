@@ -279,14 +279,52 @@
       if (!chunk.includes("~")) continue;
       const body = chunk.includes('="') ? chunk.split('="')[1].replace(/"$/, "") : chunk;
       const parts = body.split("~");
-      if (parts.length < 33) continue;
+      if (parts.length < 5) continue;
       const code = parts[2];
       const price = parseFloat(parts[3]);
-      const pct = parseFloat(parts[32]);
-      if (!price || Number.isNaN(pct)) continue;
+      const prev = parseFloat(parts[4]);
+      if (!price) continue;
+      let pct = parseFloat(parts[32]);
+      if (Number.isNaN(pct) && prev) pct = ((price - prev) / prev) * 100;
+      if (Number.isNaN(pct)) pct = 0;
       result[code] = { price: Math.round(price * 100) / 100, changePct: Math.round(pct * 100) / 100 };
     }
     return result;
+  }
+
+  function fetchSinaScriptBatch(entries) {
+    return new Promise((resolve, reject) => {
+      const symbols = entries.map(e => quoteSymbol(e.code, e.market)).join(",");
+      const script = document.createElement("script");
+      script.charset = "gbk";
+      script.src = "https://hq.sinajs.cn/list=" + symbols + "&_=" + Date.now();
+      const timer = setTimeout(() => { script.remove(); reject(new Error("sina script timeout")); }, 12000);
+      script.onload = () => {
+        clearTimeout(timer);
+        const result = {};
+        for (const e of entries) {
+          const sym = quoteSymbol(e.code, e.market);
+          const raw = window["hq_str_" + sym];
+          if (!raw) continue;
+          const parts = String(raw).split(",");
+          if (parts.length < 4 || !parts[3]) continue;
+          const price = parseFloat(parts[3]);
+          const prev = parseFloat(parts[2]) || 0;
+          if (!price || !prev) continue;
+          const pct = ((price - prev) / prev) * 100;
+          result[e.code] = { price: Math.round(price * 100) / 100, changePct: Math.round(pct * 100) / 100 };
+          try { delete window["hq_str_" + sym]; } catch (_) {}
+        }
+        script.remove();
+        resolve(result);
+      };
+      script.onerror = () => {
+        clearTimeout(timer);
+        script.remove();
+        reject(new Error("sina script error"));
+      };
+      document.head.appendChild(script);
+    });
   }
 
   async function fetchSinaBatch(entries) {
@@ -315,9 +353,16 @@
     try {
       const tencent = await fetchTencentBatch(entries);
       if (Object.keys(tencent).length > 0) return { quotes: tencent, source: "腾讯财经" };
-    } catch (_) { /* CORS 或网络异常时尝试新浪 */ }
-    const sina = await fetchSinaBatch(entries);
-    return { quotes: sina, source: "新浪财经" };
+    } catch (e) { console.warn("tencent", e); }
+    try {
+      const sina = await fetchSinaScriptBatch(entries);
+      if (Object.keys(sina).length > 0) return { quotes: sina, source: "新浪财经" };
+    } catch (e) { console.warn("sina-script", e); }
+    try {
+      const sina = await fetchSinaBatch(entries);
+      if (Object.keys(sina).length > 0) return { quotes: sina, source: "新浪财经" };
+    } catch (e) { console.warn("sina-fetch", e); }
+    return { quotes: {}, source: "" };
   }
 
   async function refreshQuotes() {
