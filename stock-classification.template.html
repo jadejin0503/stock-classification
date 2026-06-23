@@ -241,13 +241,15 @@
     return [...DATA.stocks, ...loadCustom().map(s => ({ ...s, custom: true }))];
   }
 
-  function sinaSymbol(code) {
+  function quoteSymbol(code, market) {
+    if (market === "北交所") return "bj" + code;
     return (code.startsWith("6") || code.startsWith("5")) ? "sh" + code : "sz" + code;
   }
 
   function isLiveQuoteable(stock) {
     if (stock.custom) return /^\d{6}$/.test(stock.code);
     if (stock.market === "港股" || stock.market === "美股") return false;
+    if (stock.market === "北交所") return /^\d{6}$/.test(stock.code);
     if (stock.market === "ETF") return true;
     return /^\d{6}$/.test(stock.code);
   }
@@ -266,15 +268,36 @@
     return { text: "暂无行情", cls: "na" };
   }
 
-  async function fetchSinaBatch(codes) {
-    const symbols = codes.map(sinaSymbol).join(",");
+  async function fetchTencentBatch(entries) {
+    const symbols = entries.map(e => quoteSymbol(e.code, e.market)).join(",");
+    const url = "https://qt.gtimg.cn/q=" + symbols;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    const result = {};
+    for (const chunk of text.split(";")) {
+      if (!chunk.includes("~")) continue;
+      const body = chunk.includes('="') ? chunk.split('="')[1].replace(/"$/, "") : chunk;
+      const parts = body.split("~");
+      if (parts.length < 33) continue;
+      const code = parts[2];
+      const price = parseFloat(parts[3]);
+      const pct = parseFloat(parts[32]);
+      if (!price || Number.isNaN(pct)) continue;
+      result[code] = { price: Math.round(price * 100) / 100, changePct: Math.round(pct * 100) / 100 };
+    }
+    return result;
+  }
+
+  async function fetchSinaBatch(entries) {
+    const symbols = entries.map(e => quoteSymbol(e.code, e.market)).join(",");
     const url = "https://hq.sinajs.cn/list=" + symbols;
     const res = await fetch(url, { headers: { Referer: "https://finance.sina.com.cn" } });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const text = await res.text();
     const result = {};
     for (const line of text.trim().split("\n")) {
-      const m = line.match(/hq_str_(sh|sz)(\d+)="([^"]*)"/);
+      const m = line.match(/hq_str_(sh|sz|bj)(\d+)="([^"]*)"/);
       if (!m) continue;
       const code = m[2];
       const parts = m[3].split(",");
@@ -288,25 +311,40 @@
     return result;
   }
 
+  async function fetchLiveQuotes(entries) {
+    try {
+      const tencent = await fetchTencentBatch(entries);
+      if (Object.keys(tencent).length > 0) return { quotes: tencent, source: "腾讯财经" };
+    } catch (_) { /* CORS 或网络异常时尝试新浪 */ }
+    const sina = await fetchSinaBatch(entries);
+    return { quotes: sina, source: "新浪财经" };
+  }
+
   async function refreshQuotes() {
     const status = document.getElementById("quote-status");
     status.textContent = "正在刷新行情…";
-    const codes = [...new Set(allStocks().filter(isLiveQuoteable).map(s => s.code))];
+    const liveStocks = allStocks().filter(isLiveQuoteable);
+    const codeMarket = {};
+    liveStocks.forEach(s => { codeMarket[s.code] = s.market || null; });
+    const codes = Object.keys(codeMarket);
     try {
       const merged = {};
+      let source = "腾讯财经";
       for (let i = 0; i < codes.length; i += 40) {
-        const batch = codes.slice(i, i + 40);
-        const part = await fetchSinaBatch(batch);
-        Object.assign(merged, part);
+        const batch = codes.slice(i, i + 40).map(code => ({ code, market: codeMarket[code] }));
+        const part = await fetchLiveQuotes(batch);
+        Object.assign(merged, part.quotes);
+        source = part.source;
         if (i + 40 < codes.length) await new Promise(r => setTimeout(r, 200));
       }
       if (Object.keys(merged).length === 0) throw new Error("无有效行情返回");
       quotes = { ...DATA.quoteSnapshot, ...merged };
       quoteSource = "live";
       lastUpdated = new Date();
-      status.textContent = "行情已更新 · " + lastUpdated.toLocaleString("zh-CN") + " · 来源：新浪财经";
+      status.textContent = "行情已更新 · " + lastUpdated.toLocaleString("zh-CN") + " · 来源：" + source;
       updateQuoteDOM();
     } catch (e) {
+      console.warn("refreshQuotes failed:", e);
       quotes = { ...DATA.quoteSnapshot };
       quoteSource = "snapshot";
       status.textContent = "实时刷新失败，已显示快照（" + (DATA.quoteAsOf || "") + "）。" +
